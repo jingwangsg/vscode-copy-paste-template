@@ -97,6 +97,43 @@ function wrapPythonCodeBlock(text: string): string {
   return `\`\`\`python\n${text}\n\`\`\``;
 }
 
+function movePythonFenceAboveRangeLine(
+  formattedText: string,
+  rangeText?: string
+): string {
+  if (!rangeText || rangeText.length === 0) {
+    return formattedText;
+  }
+
+  const openingFence = "```python";
+  const openingFenceIndex = formattedText.indexOf(openingFence);
+  const rangeIndex = formattedText.indexOf(rangeText);
+  if (
+    openingFenceIndex < 0 ||
+    rangeIndex < 0 ||
+    rangeIndex >= openingFenceIndex
+  ) {
+    return formattedText;
+  }
+
+  const insertIndex = formattedText.lastIndexOf("\n", rangeIndex - 1) + 1;
+  let removeEnd = openingFenceIndex + openingFence.length;
+  if (formattedText.slice(removeEnd, removeEnd + 2) === "\r\n") {
+    removeEnd += 2;
+  } else if (formattedText.charAt(removeEnd) === "\n") {
+    removeEnd += 1;
+  }
+
+  const textWithoutOpeningFence =
+    formattedText.slice(0, openingFenceIndex) + formattedText.slice(removeEnd);
+
+  return (
+    textWithoutOpeningFence.slice(0, insertIndex) +
+    `${openingFence}\n` +
+    textWithoutOpeningFence.slice(insertIndex)
+  );
+}
+
 function formatFunctionContentTemplate(
   document: vscode.TextDocument,
   replacements: { [key in ReplacementKey]?: string }
@@ -113,12 +150,16 @@ function formatFunctionContentTemplate(
   if (document.languageId === "python") {
     const firstFenceMatch = templateForOutput.match(/```[^\n]*/);
     if (firstFenceMatch) {
-      if (firstFenceMatch[0].trim() === "```") {
-        templateForOutput = templateForOutput.replace("```", "```python");
-      }
+      templateForOutput = templateForOutput.replace(firstFenceMatch[0], "```python");
     } else {
       textForOutput = wrapPythonCodeBlock(textForOutput);
     }
+
+    const formatted = formatString(templateForOutput, {
+      ...replacements,
+      text: textForOutput,
+    });
+    return movePythonFenceAboveRangeLine(formatted, replacements.range);
   }
 
   return formatString(templateForOutput, {

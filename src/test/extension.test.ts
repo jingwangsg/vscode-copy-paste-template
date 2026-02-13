@@ -1302,7 +1302,7 @@ suite("Extension Test Suite", () => {
 
     assert.ok(clipboardWriteStub.calledOnce);
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
-    assert.ok(copiedText.startsWith(":2:1-3:40|"));
+    assert.ok(copiedText.startsWith("```python\n:2:1-3:40|"));
     assert.ok(copiedText.includes("class ShardedMixtureDataset:"));
     assert.ok(copiedText.includes("    def finish_cache_shard(self):"));
   });
@@ -1349,7 +1349,7 @@ suite("Extension Test Suite", () => {
 
     assert.ok(clipboardWriteStub.calledOnce);
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
-    assert.ok(copiedText.startsWith(":2:1-4:17|"));
+    assert.ok(copiedText.startsWith("```python\n:2:1-4:17|"));
     assert.ok(copiedText.includes("class Outer:"));
     assert.ok(copiedText.includes("    @cache\n    def run(self):"));
   });
@@ -1759,7 +1759,7 @@ suite("Extension Test Suite", () => {
 
     assert.ok(clipboardWriteStub.calledOnce);
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
-    assert.ok(copiedText.startsWith(":1:1-5:7|"));
+    assert.ok(copiedText.startsWith("```python\n:1:1-5:7|"));
     assert.ok(
       copiedText.includes(
         "class Outer:\n    def run(\n        self,\n        value,\n    ):"
