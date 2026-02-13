@@ -4,7 +4,7 @@ Extension designed to conveniently template code snippets, particularly for Lang
 
 ## Usage
 
-To use the extension, select a snippert and use the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on Mac) and run the "Copy Formatted Selection" / `copy-paste-template.copySelection` command. This command now prepends all parent definitions in the current function chain (outer to inner, including the current function definition) before the selected text. If no function chain is found at the active cursor position, it falls back to copying only the selection.
+To use the extension, select a snippert and use the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on Mac) and run the "Copy Formatted Selection" / `copy-paste-template.copySelection` command. This command prepends all parent definition blocks in the current function chain (outer to inner, including the current function definition) before the selected text. For Python, this includes multiline signatures and decorators, and tolerates truncated symbol ranges by scanning forward until the definition signature closes with `:`. If no function chain is found at the active cursor position, it falls back to copying only the selection.
 
 Alternatively, run the "Copy Formatted Entire File" / `copy-paste-template.copyFile` to copy the entire file.
 
@@ -40,7 +40,7 @@ You can customize the functionality of "Copy Templater" through the settings acc
     -   `{startChar}`: Character position where the selection starts.
     -   `{endChar}`: Character position where the selection ends.
     
--   `copy-paste-template.removeRootIndentation`: If enabled, removes any root indentation from copied selections (`copy-paste-template.copySelection`). The default is set to `true`. For `copy-paste-template.copySelection`, this applies only to the selected text portion; prepended parent definition lines always preserve source indentation. `copy-paste-template.copyFunctionWithParents` and `copy-paste-template.copyFunctionDefinitionWithParents` always preserve source indentation.
+-   `copy-paste-template.removeRootIndentation`: If enabled, removes any root indentation from copied selections (`copy-paste-template.copySelection`). The default is set to `true`. For `copy-paste-template.copySelection`, this setting is applied when no function chain is found at the cursor. When function parent definitions are prepended, the selected text keeps its original source indentation. `copy-paste-template.copyFunctionWithParents` and `copy-paste-template.copyFunctionDefinitionWithParents` always preserve source indentation.
 
 The default template is set to output a markdown code block prefixed by the file path and range. You could easily change the template to use different formats, e.g. XML.
 

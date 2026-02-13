@@ -11,9 +11,11 @@ import {
   copyFunctionWithParents,
   copyFunctionDefinitionWithParents,
   copyFunctionQualifiedName,
+  __setClipboardWriterForTests,
   getConfiguration,
   formatTemplate,
   getDocumentSymbols,
+  extractDefinitionBlock,
   findInnermostFunctionSymbolAtPosition,
   composeQualifiedFunctionName,
   extractDefinitionHeaderLine,
@@ -26,6 +28,7 @@ suite("Extension Test Suite", () => {
   vscode.window.showInformationMessage("Start all tests.");
 
   teardown(() => {
+    __setClipboardWriterForTests();
     sinon.restore();
   });
 
@@ -44,6 +47,12 @@ suite("Extension Test Suite", () => {
       new vscode.Range(startLine, startChar, endLine, endChar),
       new vscode.Range(startLine, startChar, startLine, startChar)
     );
+  }
+
+  function createClipboardWriteStub(): sinon.SinonStub<[string], Promise<void>> {
+    const clipboardWriteStub = sinon.stub<[string], Promise<void>>().resolves();
+    __setClipboardWriterForTests((text: string) => clipboardWriteStub(text));
+    return clipboardWriteStub;
   }
 
   test("replacePlaceholder should replace placeholders correctly", () => {
@@ -131,7 +140,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -154,7 +163,7 @@ suite("Extension Test Suite", () => {
     assert.strictEqual(copiedText, "class Outer {\n  run() {\nreturn x;");
   });
 
-  test("copySelection should apply root indentation removal only to selected text", async () => {
+  test("copySelection should preserve selected text indentation when prepending parents", async () => {
     const document = await vscode.workspace.openTextDocument({
       language: "typescript",
       content:
@@ -177,7 +186,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -199,7 +208,7 @@ suite("Extension Test Suite", () => {
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
     assert.strictEqual(
       copiedText,
-      "  class Outer {\n    run() {\nconst y = 1;\nreturn y;"
+      "  class Outer {\n    run() {\n      const y = 1;\n      return y;"
     );
   });
 
@@ -222,7 +231,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     const infoStub = sinon.stub(vscode.window, "showInformationMessage");
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
@@ -270,7 +279,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -294,6 +303,191 @@ suite("Extension Test Suite", () => {
       copiedText,
       ":4:5-4:14|class Outer {\n  run() {\nreturn x;"
     );
+  });
+
+  test("copySelection should include full multiline python definition blocks", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "python",
+      content:
+        "class LeRobotMixtureDataset(Dataset):\n    def __init__(\n        self,\n        data_mixture,\n    ):\n        datasets = []\n        dataset_sampling_weights = []\n        for dataset, weight in data_mixture:\n            datasets.append(dataset)\n            dataset_sampling_weights.append(weight)\n",
+    });
+    const selectedEndChar = document.lineAt(9).text.length;
+    const classSymbol = createSymbol(
+      "LeRobotMixtureDataset",
+      vscode.SymbolKind.Class,
+      0,
+      0,
+      9,
+      selectedEndChar
+    );
+    const initSymbol = createSymbol(
+      "__init__",
+      vscode.SymbolKind.Method,
+      1,
+      4,
+      9,
+      selectedEndChar
+    );
+    classSymbol.children = [initSymbol];
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(7, 0),
+        new vscode.Position(9, selectedEndChar)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return true;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.ok(
+      copiedText.includes(
+        "class LeRobotMixtureDataset(Dataset):\n    def __init__(\n        self,\n        data_mixture,\n    ):"
+      )
+    );
+    assert.ok(
+      copiedText.includes(
+        "\n        for dataset, weight in data_mixture:\n            datasets.append(dataset)\n            dataset_sampling_weights.append(weight)"
+      )
+    );
+  });
+
+  test("copySelection should include full python definition when symbol range is truncated", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "python",
+      content:
+        "class LeRobotMixtureDataset(Dataset):\n    def __init__(\n        self,\n        data_mixture,\n    ):\n        self.balance_dataset_weights = balance_dataset_weights\n        self.balance_trajectory_weights = balance_trajectory_weights\n        self.seed = seed\n        self.training = training\n        self.allow_padding_at_end = allow_padding_at_end\n",
+    });
+    const classEndChar = document.lineAt(9).text.length;
+    const initHeaderEndChar = document.lineAt(1).text.length;
+    const classSymbol = createSymbol(
+      "LeRobotMixtureDataset",
+      vscode.SymbolKind.Class,
+      0,
+      0,
+      9,
+      classEndChar
+    );
+    const initSymbol = createSymbol(
+      "__init__",
+      vscode.SymbolKind.Method,
+      1,
+      4,
+      1,
+      initHeaderEndChar
+    );
+    classSymbol.children = [initSymbol];
+
+    const mockEditor = {
+      document,
+      // Keep active on the truncated definition line so function matching still succeeds.
+      selection: new vscode.Selection(
+        new vscode.Position(9, classEndChar),
+        new vscode.Position(1, 8)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return true;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.ok(
+      copiedText.includes(
+        "class LeRobotMixtureDataset(Dataset):\n    def __init__(\n        self,\n        data_mixture,\n    ):"
+      )
+    );
+    assert.ok(
+      copiedText.includes(
+        "        self.balance_dataset_weights = balance_dataset_weights\n        self.balance_trajectory_weights = balance_trajectory_weights\n        self.seed = seed\n        self.training = training\n        self.allow_padding_at_end = allow_padding_at_end"
+      )
+    );
+  });
+
+  test("copySelection should still remove root indentation when no function matches", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "const items = {\n    first: 1,\n    second: 2,\n};\n",
+    });
+    const selectedEndChar = document.lineAt(2).text.length;
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(1, 0),
+        new vscode.Position(2, selectedEndChar)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return true;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.strictEqual(copiedText, "first: 1,\nsecond: 2,");
   });
 
   test("copyFile should not throw an error when called", () => {
@@ -378,7 +572,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     const infoStub = sinon.stub(vscode.window, "showInformationMessage");
 
     await copyFunctionQualifiedName();
@@ -419,7 +613,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
 
     await copyFunctionQualifiedName();
 
@@ -446,7 +640,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([functionSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
 
     await copyFunctionQualifiedName();
 
@@ -473,7 +667,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     const infoStub = sinon.stub(vscode.window, "showInformationMessage");
 
     await copyFunctionQualifiedName();
@@ -522,7 +716,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
 
     await copyFunctionQualifiedName();
 
@@ -622,6 +816,23 @@ suite("Extension Test Suite", () => {
     assert.strictEqual(header, "  class Container {");
   });
 
+  test("extractDefinitionBlock should include decorator outside symbol range start", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "python",
+      content:
+        "class Outer:\n    @cache\n    def run(\n        self,\n    ):\n        return 1\n",
+    });
+    const methodSymbol = createSymbol("run", vscode.SymbolKind.Method, 2, 4, 2, 11);
+    methodSymbol.selectionRange = new vscode.Range(2, 4, 2, 7);
+
+    const definitionBlock = extractDefinitionBlock(document, methodSymbol);
+
+    assert.strictEqual(
+      definitionBlock.text,
+      "    @cache\n    def run(\n        self,\n    ):"
+    );
+  });
+
   test("getCopyRangeForFunctionSymbol should expand start when prefix is whitespace", async () => {
     const document = await vscode.workspace.openTextDocument({
       language: "python",
@@ -719,7 +930,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -775,7 +986,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([methodSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -831,7 +1042,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -878,7 +1089,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -923,7 +1134,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     const infoStub = sinon.stub(vscode.window, "showInformationMessage");
 
     await copyFunctionWithParents();
@@ -956,7 +1167,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1012,7 +1223,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1058,7 +1269,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1103,7 +1314,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1150,7 +1361,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1197,7 +1408,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1245,7 +1456,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1291,7 +1502,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1340,7 +1551,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     sinon.stub(vscode.workspace, "getConfiguration").returns({
       get: (key: string) => {
         if (key === "template") {
@@ -1382,7 +1593,7 @@ suite("Extension Test Suite", () => {
       .stub(vscode.commands, "executeCommand")
       .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
       .resolves([classSymbol]);
-    const clipboardWriteStub = sinon.stub(vscode.env.clipboard, "writeText").resolves();
+    const clipboardWriteStub = createClipboardWriteStub();
     const infoStub = sinon.stub(vscode.window, "showInformationMessage");
 
     await copyFunctionDefinitionWithParents();

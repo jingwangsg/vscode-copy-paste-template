@@ -35,6 +35,20 @@ export type DefinitionBlock = {
   endChar: number;
 };
 
+type ClipboardWriter = (text: string) => Thenable<void>;
+
+const defaultClipboardWriter: ClipboardWriter = (text: string) =>
+  vscode.env.clipboard.writeText(text);
+let clipboardWriter: ClipboardWriter = defaultClipboardWriter;
+
+export function __setClipboardWriterForTests(writer?: ClipboardWriter): void {
+  clipboardWriter = writer ?? defaultClipboardWriter;
+}
+
+export async function writeClipboardText(text: string): Promise<void> {
+  await clipboardWriter(text);
+}
+
 export function getConfiguration(key: string): string | undefined {
   return vscode.workspace
     .getConfiguration("copy-paste-template")
@@ -128,18 +142,24 @@ export async function copySelection() {
   }
 
   const { document, selection } = editor;
-  const text = document.getText(selection);
-  const undentedText = getConfiguration("removeRootIndentation")
-    ? removeRootIndentation(text)
-    : text;
+  const selectedText = document.getText(selection);
   const symbols = await getDocumentSymbols(document);
   const functionMatch = findInnermostFunctionSymbolAtPosition(
     symbols,
     selection.active
   );
+  const selectedTextForOutput = functionMatch
+    ? selectedText
+    : getConfiguration("removeRootIndentation")
+      ? removeRootIndentation(selectedText)
+      : selectedText;
   const textWithParents = functionMatch
-    ? composeSelectionWithParentsText(document, functionMatch, undentedText)
-    : undentedText;
+    ? composeSelectionWithParentsText(
+        document,
+        functionMatch,
+        selectedTextForOutput
+      )
+    : selectedTextForOutput;
 
   const replacements: { [key in ReplacementKey]?: string } = {
     filePath: vscode.workspace.asRelativePath(document.uri.fsPath),
@@ -154,7 +174,7 @@ export async function copySelection() {
 
   const formattedText = formatTemplate("template", replacements);
   if (formattedText) {
-    await vscode.env.clipboard.writeText(formattedText);
+    await writeClipboardText(formattedText);
   }
 }
 
@@ -367,10 +387,10 @@ export function composeSelectionWithParentsText(
     return selectedText;
   }
 
-  const parentHeaders = parentSymbols.map((symbol) =>
-    extractDefinitionHeaderLine(document, symbol)
+  const parentDefinitionBlocks = parentSymbols.map((symbol) =>
+    extractDefinitionBlock(document, symbol).text
   );
-  return `${parentHeaders.join("\n")}\n${selectedText}`;
+  return `${parentDefinitionBlocks.join("\n")}\n${selectedText}`;
 }
 
 export function isNameSegmentSymbolKind(kind: vscode.SymbolKind): boolean {
@@ -423,11 +443,11 @@ function buildSingleLineDefinitionBlock(
 
 function findPythonDefinitionStartLine(
   document: vscode.TextDocument,
-  symbol: vscode.DocumentSymbol,
+  _symbol: vscode.DocumentSymbol,
   anchorLine: number
 ): number {
   let startLine = anchorLine;
-  while (startLine > symbol.range.start.line) {
+  while (startLine > 0) {
     const candidate = document.lineAt(startLine - 1).text.trim();
     if (!candidate.startsWith("@")) {
       break;
@@ -527,17 +547,42 @@ function findPythonDefinitionEndLine(
     escapeNext: false,
   };
 
-  for (let line = anchorLine; line <= maxLine; line += 1) {
-    const lineText = document.lineAt(line).text.trimEnd();
-    const scanResult = scanPythonLine(lineText, depth, stringState);
-    depth = scanResult.depth;
+  const symbolBoundEndLine = Math.max(
+    anchorLine,
+    Math.min(maxLine, document.lineCount - 1)
+  );
+  const scanForDefinitionEnd = (
+    startLine: number,
+    endLine: number
+  ): number | undefined => {
+    for (let line = startLine; line <= endLine; line += 1) {
+      const lineText = document.lineAt(line).text.trimEnd();
+      const scanResult = scanPythonLine(lineText, depth, stringState);
+      depth = scanResult.depth;
 
-    if (
-      depth === 0 &&
-      !stringState.quoteChar &&
-      scanResult.visibleCode.trimEnd().endsWith(":")
-    ) {
-      return line;
+      if (
+        depth === 0 &&
+        !stringState.quoteChar &&
+        scanResult.visibleCode.trimEnd().endsWith(":")
+      ) {
+        return line;
+      }
+    }
+    return undefined;
+  };
+
+  const inSymbolEndLine = scanForDefinitionEnd(anchorLine, symbolBoundEndLine);
+  if (inSymbolEndLine !== undefined) {
+    return inSymbolEndLine;
+  }
+
+  if (symbolBoundEndLine < document.lineCount - 1) {
+    const beyondSymbolEndLine = scanForDefinitionEnd(
+      symbolBoundEndLine + 1,
+      document.lineCount - 1
+    );
+    if (beyondSymbolEndLine !== undefined) {
+      return beyondSymbolEndLine;
     }
   }
 
@@ -648,7 +693,7 @@ export async function copyFunctionWithParents() {
 
   const formattedText = formatTemplate("template", replacements);
   if (formattedText) {
-    await vscode.env.clipboard.writeText(formattedText);
+    await writeClipboardText(formattedText);
   }
 }
 
@@ -701,7 +746,7 @@ export async function copyFunctionDefinitionWithParents() {
 
   const formattedText = formatTemplate("template", replacements);
   if (formattedText) {
-    await vscode.env.clipboard.writeText(formattedText);
+    await writeClipboardText(formattedText);
   }
 }
 
@@ -729,7 +774,7 @@ export async function copyFunctionQualifiedName() {
     return;
   }
 
-  await vscode.env.clipboard.writeText(qualifiedName);
+  await writeClipboardText(qualifiedName);
 }
 
 export function copyFile() {
@@ -747,7 +792,7 @@ export function copyFile() {
 
   const formattedText = formatTemplate("template", replacements);
   if (formattedText) {
-    vscode.env.clipboard.writeText(formattedText);
+    void writeClipboardText(formattedText);
   }
 }
 
