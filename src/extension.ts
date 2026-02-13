@@ -93,6 +93,40 @@ export function formatTemplate(
   return formatString(template, replacements);
 }
 
+function wrapPythonCodeBlock(text: string): string {
+  return `\`\`\`python\n${text}\n\`\`\``;
+}
+
+function formatFunctionContentTemplate(
+  document: vscode.TextDocument,
+  replacements: { [key in ReplacementKey]?: string }
+): string | undefined {
+  const template = getConfiguration("template");
+  if (!template) {
+    vscode.window.showInformationMessage("No template found for template");
+    return undefined;
+  }
+
+  let templateForOutput = template;
+  let textForOutput = replacements.text ?? "";
+
+  if (document.languageId === "python") {
+    const firstFenceMatch = templateForOutput.match(/```[^\n]*/);
+    if (firstFenceMatch) {
+      if (firstFenceMatch[0].trim() === "```") {
+        templateForOutput = templateForOutput.replace("```", "```python");
+      }
+    } else {
+      textForOutput = wrapPythonCodeBlock(textForOutput);
+    }
+  }
+
+  return formatString(templateForOutput, {
+    ...replacements,
+    text: textForOutput,
+  });
+}
+
 export function removeRootIndentation(text: string): string {
   const lines = text.split("\n");
   const rootIndentation = lines.reduce((min, line) => {
@@ -804,7 +838,7 @@ export async function copyFunctionWithParents() {
     text: combinedText,
   };
 
-  const formattedText = formatTemplate("template", replacements);
+  const formattedText = formatFunctionContentTemplate(document, replacements);
   if (formattedText) {
     await writeClipboardText(formattedText);
   }
@@ -857,7 +891,7 @@ export async function copyFunctionDefinitionWithParents() {
     text: combinedText,
   };
 
-  const formattedText = formatTemplate("template", replacements);
+  const formattedText = formatFunctionContentTemplate(document, replacements);
   if (formattedText) {
     await writeClipboardText(formattedText);
   }

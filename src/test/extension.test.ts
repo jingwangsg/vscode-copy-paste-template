@@ -1573,7 +1573,7 @@ suite("Extension Test Suite", () => {
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
     assert.strictEqual(
       copiedText,
-      "class Outer:\n    def run(\n        self,\n        value,\n    ):"
+      "```python\nclass Outer:\n    def run(\n        self,\n        value,\n    ):\n```"
     );
     assert.ok(!copiedText.includes("return value"));
   });
@@ -1620,7 +1620,7 @@ suite("Extension Test Suite", () => {
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
     assert.strictEqual(
       copiedText,
-      "class Outer:\n    def run(\n        pattern=\"(\",\n        value=1,\n    ):"
+      "```python\nclass Outer:\n    def run(\n        pattern=\"(\",\n        value=1,\n    ):\n```"
     );
     assert.ok(!copiedText.includes("return value"));
   });
@@ -1667,7 +1667,7 @@ suite("Extension Test Suite", () => {
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
     assert.strictEqual(
       copiedText,
-      "class Outer(\n    Base,\n):\n    def run(\n        self,\n    ):"
+      "```python\nclass Outer(\n    Base,\n):\n    def run(\n        self,\n    ):\n```"
     );
     assert.ok(!copiedText.includes("return 1"));
   });
@@ -1715,7 +1715,7 @@ suite("Extension Test Suite", () => {
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
     assert.strictEqual(
       copiedText,
-      "class Outer:\n    @cache\n    def run(\n        self,\n    ):"
+      "```python\nclass Outer:\n    @cache\n    def run(\n        self,\n    ):\n```"
     );
   });
 
