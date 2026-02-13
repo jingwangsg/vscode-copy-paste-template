@@ -52,6 +52,18 @@
       {
         "command": "copy-paste-template.copyFile",
         "title": "Copy Formatted Entire File"
+      },
+      {
+        "command": "copy-paste-template.copyFunctionWithParents",
+        "title": "Copy Formatted Function With Parents"
+      },
+      {
+        "command": "copy-paste-template.copyFunctionDefinitionWithParents",
+        "title": "Copy Formatted Function Definition With Parents"
+      },
+      {
+        "command": "copy-paste-template.copyFunctionQualifiedName",
+        "title": "Copy Function Qualified Name"
       }
     ]
   },
