@@ -35,6 +35,13 @@ export type DefinitionBlock = {
   endChar: number;
 };
 
+type SelectionOmission = {
+  hasPrefixOmission: boolean;
+  hasSuffixOmission: boolean;
+  prefixIndent: string;
+  suffixIndent: string;
+};
+
 type ClipboardWriter = (text: string) => Thenable<void>;
 
 const defaultClipboardWriter: ClipboardWriter = (text: string) =>
@@ -153,11 +160,15 @@ export async function copySelection() {
     : getConfiguration("removeRootIndentation")
       ? removeRootIndentation(selectedText)
       : selectedText;
+  const omission = functionMatch
+    ? computeFunctionSelectionOmission(document, functionMatch, selection)
+    : undefined;
   const textWithParents = functionMatch
     ? composeSelectionWithParentsText(
         document,
         functionMatch,
-        selectedTextForOutput
+        selectedTextForOutput,
+        omission
       )
     : selectedTextForOutput;
 
@@ -380,7 +391,8 @@ export function composeFunctionWithParentsText(
 export function composeSelectionWithParentsText(
   document: vscode.TextDocument,
   functionMatch: FunctionSymbolMatch,
-  selectedText: string
+  selectedText: string,
+  omission?: SelectionOmission
 ): string {
   const parentSymbols = [...functionMatch.ancestors, functionMatch.symbol];
   if (parentSymbols.length === 0) {
@@ -390,7 +402,108 @@ export function composeSelectionWithParentsText(
   const parentDefinitionBlocks = parentSymbols.map((symbol) =>
     extractDefinitionBlock(document, symbol).text
   );
-  return `${parentDefinitionBlocks.join("\n")}\n${selectedText}`;
+  const parts = [parentDefinitionBlocks.join("\n")];
+
+  if (omission?.hasPrefixOmission) {
+    parts.push(`${omission.prefixIndent}# ......`);
+  }
+  parts.push(selectedText);
+  if (omission?.hasSuffixOmission) {
+    parts.push(`${omission.suffixIndent}# ......`);
+  }
+
+  return parts.join("\n");
+}
+
+function isStructuralOnlyLine(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return true;
+  }
+  return /^[\]\)\};,]+$/.test(trimmed);
+}
+
+function hasSignificantCodeLineInRange(
+  document: vscode.TextDocument,
+  startLine: number,
+  endLine: number
+): boolean {
+  if (startLine > endLine) {
+    return false;
+  }
+  for (let line = startLine; line <= endLine; line += 1) {
+    const lineText = document.lineAt(line).text;
+    if (!isStructuralOnlyLine(lineText)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getLineIndent(text: string): string {
+  return text.match(/^\s*/)?.[0] ?? "";
+}
+
+function findFirstSelectedNonEmptyLineIndent(
+  document: vscode.TextDocument,
+  selection: vscode.Selection
+): string {
+  const startLine = Math.min(selection.start.line, selection.end.line);
+  const endLine = Math.max(selection.start.line, selection.end.line);
+  for (let line = startLine; line <= endLine; line += 1) {
+    const lineText = document.lineAt(line).text;
+    if (lineText.trim().length > 0) {
+      return getLineIndent(lineText);
+    }
+  }
+  return "";
+}
+
+function findLastSelectedNonEmptyLineIndent(
+  document: vscode.TextDocument,
+  selection: vscode.Selection
+): string {
+  const startLine = Math.min(selection.start.line, selection.end.line);
+  const endLine = Math.max(selection.start.line, selection.end.line);
+  for (let line = endLine; line >= startLine; line -= 1) {
+    const lineText = document.lineAt(line).text;
+    if (lineText.trim().length > 0) {
+      return getLineIndent(lineText);
+    }
+  }
+  return "";
+}
+
+function computeFunctionSelectionOmission(
+  document: vscode.TextDocument,
+  functionMatch: FunctionSymbolMatch,
+  selection: vscode.Selection
+): SelectionOmission {
+  const definitionBlock = extractDefinitionBlock(document, functionMatch.symbol);
+  const bodyStartLine = Math.max(
+    definitionBlock.endLine + 1,
+    functionMatch.symbol.range.start.line + 1
+  );
+  const bodyEndLine = functionMatch.symbol.range.end.line;
+  const selectionStartLine = Math.min(selection.start.line, selection.end.line);
+  const selectionEndLine = Math.max(selection.start.line, selection.end.line);
+  const hasPrefixOmission = hasSignificantCodeLineInRange(
+    document,
+    bodyStartLine,
+    selectionStartLine - 1
+  );
+  const hasSuffixOmission = hasSignificantCodeLineInRange(
+    document,
+    selectionEndLine + 1,
+    bodyEndLine
+  );
+
+  return {
+    hasPrefixOmission,
+    hasSuffixOmission,
+    prefixIndent: findFirstSelectedNonEmptyLineIndent(document, selection),
+    suffixIndent: findLastSelectedNonEmptyLineIndent(document, selection),
+  };
 }
 
 export function isNameSegmentSymbolKind(kind: vscode.SymbolKind): boolean {
@@ -774,7 +887,7 @@ export async function copyFunctionQualifiedName() {
     return;
   }
 
-  await writeClipboardText(qualifiedName);
+  await writeClipboardText(`\`${qualifiedName}\``);
 }
 
 export function copyFile() {

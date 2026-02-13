@@ -130,7 +130,7 @@ suite("Extension Test Suite", () => {
     const mockEditor = {
       document,
       selection: new vscode.Selection(
-        new vscode.Position(3, 4),
+        new vscode.Position(3, 0),
         new vscode.Position(3, 13)
       ),
     } as unknown as vscode.TextEditor;
@@ -160,7 +160,10 @@ suite("Extension Test Suite", () => {
 
     assert.ok(clipboardWriteStub.calledOnce);
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
-    assert.strictEqual(copiedText, "class Outer {\n  run() {\nreturn x;");
+    assert.strictEqual(
+      copiedText,
+      "class Outer {\n  run() {\n    # ......\n    return x;"
+    );
   });
 
   test("copySelection should preserve selected text indentation when prepending parents", async () => {
@@ -269,7 +272,7 @@ suite("Extension Test Suite", () => {
     const mockEditor = {
       document,
       selection: new vscode.Selection(
-        new vscode.Position(3, 4),
+        new vscode.Position(3, 0),
         new vscode.Position(3, 13)
       ),
     } as unknown as vscode.TextEditor;
@@ -301,7 +304,7 @@ suite("Extension Test Suite", () => {
     const copiedText = clipboardWriteStub.firstCall.args[0] as string;
     assert.strictEqual(
       copiedText,
-      ":4:5-4:14|class Outer {\n  run() {\nreturn x;"
+      ":4:1-4:14|class Outer {\n  run() {\n    # ......\n    return x;"
     );
   });
 
@@ -490,6 +493,243 @@ suite("Extension Test Suite", () => {
     assert.strictEqual(copiedText, "first: 1,\nsecond: 2,");
   });
 
+  test("copySelection should add only prefix omission marker when suffix has no omitted code lines", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "class Outer {\n  run() {\n    const before = 1;\n    return before;\n  }\n}\n",
+    });
+    const classSymbol = createSymbol("Outer", vscode.SymbolKind.Class, 0, 0, 5, 1);
+    const methodSymbol = createSymbol("run", vscode.SymbolKind.Method, 1, 2, 4, 3);
+    classSymbol.children = [methodSymbol];
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(3, 0),
+        new vscode.Position(4, 0)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return false;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.strictEqual(
+      copiedText,
+      "class Outer {\n  run() {\n    # ......\n    return before;\n"
+    );
+  });
+
+  test("copySelection should add only suffix omission marker when prefix has no omitted code lines", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "class Outer {\n  run() {\n    return 1;\n    const after = 2;\n  }\n}\n",
+    });
+    const classSymbol = createSymbol("Outer", vscode.SymbolKind.Class, 0, 0, 5, 1);
+    const methodSymbol = createSymbol("run", vscode.SymbolKind.Method, 1, 2, 4, 3);
+    classSymbol.children = [methodSymbol];
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(2, 0),
+        new vscode.Position(2, 13)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return false;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.strictEqual(
+      copiedText,
+      "class Outer {\n  run() {\n    return 1;\n    # ......"
+    );
+  });
+
+  test("copySelection should not add markers when only blank lines are omitted", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "class Outer {\n  run() {\n\n\n    return 1;\n\n\n  }\n}\n",
+    });
+    const classSymbol = createSymbol("Outer", vscode.SymbolKind.Class, 0, 0, 7, 1);
+    const methodSymbol = createSymbol("run", vscode.SymbolKind.Method, 1, 2, 6, 3);
+    classSymbol.children = [methodSymbol];
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(4, 0),
+        new vscode.Position(4, 13)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return false;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.strictEqual(copiedText, "class Outer {\n  run() {\n    return 1;");
+    assert.ok(!copiedText.includes("# ......"));
+  });
+
+  test("copySelection should not add markers for partial same-line omission", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "class Outer {\n  run() {\n    return value + 1;\n  }\n}\n",
+    });
+    const classSymbol = createSymbol("Outer", vscode.SymbolKind.Class, 0, 0, 4, 1);
+    const methodSymbol = createSymbol("run", vscode.SymbolKind.Method, 1, 2, 3, 3);
+    classSymbol.children = [methodSymbol];
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(2, 11),
+        new vscode.Position(2, 16)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return false;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.strictEqual(copiedText, "class Outer {\n  run() {\nvalue");
+    assert.ok(!copiedText.includes("# ......"));
+  });
+
+  test("copySelection omission markers should only consider current function scope", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content:
+        "class Outer {\n  before() {\n    return 0;\n  }\n\n  run() {\n    const only = 1;\n  }\n\n  after() {\n    return 2;\n  }\n}\n",
+    });
+    const classSymbol = createSymbol("Outer", vscode.SymbolKind.Class, 0, 0, 12, 1);
+    const beforeSymbol = createSymbol("before", vscode.SymbolKind.Method, 1, 2, 3, 3);
+    const runSymbol = createSymbol("run", vscode.SymbolKind.Method, 5, 2, 7, 3);
+    const afterSymbol = createSymbol("after", vscode.SymbolKind.Method, 9, 2, 11, 3);
+    classSymbol.children = [beforeSymbol, runSymbol, afterSymbol];
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(6, 0),
+        new vscode.Position(6, 19)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{text}";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return false;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.strictEqual(copiedText, "class Outer {\n  run() {\n    const only = 1;");
+    assert.ok(!copiedText.includes("# ......"));
+  });
+
   test("copyFile should not throw an error when called", () => {
     try {
       copyFile();
@@ -577,7 +817,7 @@ suite("Extension Test Suite", () => {
 
     await copyFunctionQualifiedName();
 
-    assert.ok(clipboardWriteStub.calledOnceWithExactly("Outer.run"));
+    assert.ok(clipboardWriteStub.calledOnceWithExactly("`Outer.run`"));
     assert.ok(infoStub.notCalled);
   });
 
@@ -617,7 +857,7 @@ suite("Extension Test Suite", () => {
 
     await copyFunctionQualifiedName();
 
-    assert.ok(clipboardWriteStub.calledOnceWithExactly("Outer.run.inner"));
+    assert.ok(clipboardWriteStub.calledOnceWithExactly("`Outer.run.inner`"));
   });
 
   test("copyFunctionQualifiedName should copy top-level function name", async () => {
@@ -644,7 +884,7 @@ suite("Extension Test Suite", () => {
 
     await copyFunctionQualifiedName();
 
-    assert.ok(clipboardWriteStub.calledOnceWithExactly("run"));
+    assert.ok(clipboardWriteStub.calledOnceWithExactly("`run`"));
   });
 
   test("copyFunctionQualifiedName should show info and not copy when no function matches", async () => {
@@ -720,7 +960,7 @@ suite("Extension Test Suite", () => {
 
     await copyFunctionQualifiedName();
 
-    assert.ok(clipboardWriteStub.calledOnceWithExactly("Outer.second"));
+    assert.ok(clipboardWriteStub.calledOnceWithExactly("`Outer.second`"));
   });
 
   test("getDocumentSymbols should convert SymbolInformation results to nested symbols", async () => {

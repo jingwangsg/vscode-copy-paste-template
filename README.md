@@ -4,7 +4,7 @@ Extension designed to conveniently template code snippets, particularly for Lang
 
 ## Usage
 
-To use the extension, select a snippert and use the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on Mac) and run the "Copy Formatted Selection" / `copy-paste-template.copySelection` command. This command prepends all parent definition blocks in the current function chain (outer to inner, including the current function definition) before the selected text. For Python, this includes multiline signatures and decorators, and tolerates truncated symbol ranges by scanning forward until the definition signature closes with `:`. If no function chain is found at the active cursor position, it falls back to copying only the selection.
+To use the extension, select a snippert and use the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on Mac) and run the "Copy Formatted Selection" / `copy-paste-template.copySelection` command. This command prepends all parent definition blocks in the current function chain (outer to inner, including the current function definition) before the selected text. For Python, this includes multiline signatures and decorators, and tolerates truncated symbol ranges by scanning forward until the definition signature closes with `:`. If code lines are omitted before or after the selected lines inside the current function, it inserts `# ......` to indicate omitted content. If no function chain is found at the active cursor position, it falls back to copying only the selection.
 
 Alternatively, run the "Copy Formatted Entire File" / `copy-paste-template.copyFile` to copy the entire file.
 
@@ -12,7 +12,7 @@ You can also run "Copy Formatted Function With Parents" / `copy-paste-template.c
 
 You can run "Copy Formatted Function Definition With Parents" / `copy-paste-template.copyFunctionDefinitionWithParents` to copy only parent definition blocks plus the current function definition block (supports multi-line signatures in Python), without copying the function body.
 
-You can run "Copy Function Qualified Name" / `copy-paste-template.copyFunctionQualifiedName` to copy only the qualified function name at the active cursor (for example, `Outer.run`), including full class/function chain segments. This command writes plain text (no template formatting). If no function is found, it shows an informational message and does not modify the clipboard.
+You can run "Copy Function Qualified Name" / `copy-paste-template.copyFunctionQualifiedName` to copy the qualified function name at the active cursor wrapped in backticks (for example, `` `Outer.run` ``), including full class/function chain segments. This command writes plain text (no template formatting). If no function is found, it shows an informational message and does not modify the clipboard.
 
 ## Features
 
