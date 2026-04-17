@@ -450,6 +450,79 @@ suite("Extension Test Suite", () => {
     );
   });
 
+  test("copySelection should recover truncated python symbol from body selection and keep omission markers", async () => {
+    const document = await vscode.workspace.openTextDocument({
+      language: "python",
+      content:
+        "class LeRobotMixtureDataset(Dataset):\n    def __init__(\n        self,\n        data_mixture,\n    ):\n        self.balance_dataset_weights = balance_dataset_weights\n        self.balance_trajectory_weights = balance_trajectory_weights\n        self.seed = seed\n        self.training = training\n        self.allow_padding_at_end = allow_padding_at_end\n",
+    });
+    const classEndChar = document.lineAt(9).text.length;
+    const initHeaderEndChar = document.lineAt(1).text.length;
+    const selectedEndChar = document.lineAt(7).text.length;
+    const classSymbol = createSymbol(
+      "LeRobotMixtureDataset",
+      vscode.SymbolKind.Class,
+      0,
+      0,
+      9,
+      classEndChar
+    );
+    const initSymbol = createSymbol(
+      "__init__",
+      vscode.SymbolKind.Method,
+      1,
+      4,
+      1,
+      initHeaderEndChar
+    );
+    classSymbol.children = [initSymbol];
+
+    const mockEditor = {
+      document,
+      selection: new vscode.Selection(
+        new vscode.Position(6, 0),
+        new vscode.Position(7, selectedEndChar)
+      ),
+    } as unknown as vscode.TextEditor;
+
+    sinon.stub(vscode.window, "activeTextEditor").value(mockEditor);
+    sinon
+      .stub(vscode.commands, "executeCommand")
+      .withArgs("vscode.executeDocumentSymbolProvider", document.uri)
+      .resolves([classSymbol]);
+    const clipboardWriteStub = createClipboardWriteStub();
+    sinon.stub(vscode.workspace, "getConfiguration").returns({
+      get: (key: string) => {
+        if (key === "template") {
+          return "{range}\n```\n{text}\n```";
+        }
+        if (key === "rangeTemplate") {
+          return ":{startLine}:{startChar}-{endLine}:{endChar}";
+        }
+        if (key === "removeRootIndentation") {
+          return true;
+        }
+        return undefined;
+      },
+    } as vscode.WorkspaceConfiguration);
+
+    await copySelection();
+
+    assert.ok(clipboardWriteStub.calledOnce);
+    const copiedText = clipboardWriteStub.firstCall.args[0] as string;
+    assert.ok(copiedText.startsWith("```python\n:7:1-8:"));
+    assert.ok(
+      copiedText.includes(
+        "class LeRobotMixtureDataset(Dataset):\n    def __init__(\n        self,\n        data_mixture,\n    ):"
+      )
+    );
+    assert.ok(
+      copiedText.includes(
+        "        # ......\n        self.balance_trajectory_weights = balance_trajectory_weights\n        self.seed = seed\n        # ......"
+      )
+    );
+  });
+
   test("copySelection should still remove root indentation when no function matches", async () => {
     const document = await vscode.workspace.openTextDocument({
       language: "typescript",

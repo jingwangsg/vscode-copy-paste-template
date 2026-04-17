@@ -97,6 +97,10 @@ function wrapPythonCodeBlock(text: string): string {
   return `\`\`\`python\n${text}\n\`\`\``;
 }
 
+type TemplateFormatOptions = {
+  autoWrapPythonWithoutFence: boolean;
+};
+
 function movePythonFenceAboveRangeLine(
   formattedText: string,
   rangeText?: string
@@ -136,7 +140,8 @@ function movePythonFenceAboveRangeLine(
 
 function formatFunctionContentTemplate(
   document: vscode.TextDocument,
-  replacements: { [key in ReplacementKey]?: string }
+  replacements: { [key in ReplacementKey]?: string },
+  options: TemplateFormatOptions = { autoWrapPythonWithoutFence: true }
 ): string | undefined {
   const template = getConfiguration("template");
   if (!template) {
@@ -151,7 +156,7 @@ function formatFunctionContentTemplate(
     const firstFenceMatch = templateForOutput.match(/```[^\n]*/);
     if (firstFenceMatch) {
       templateForOutput = templateForOutput.replace(firstFenceMatch[0], "```python");
-    } else {
+    } else if (options.autoWrapPythonWithoutFence) {
       textForOutput = wrapPythonCodeBlock(textForOutput);
     }
 
@@ -226,9 +231,10 @@ export async function copySelection() {
   const { document, selection } = editor;
   const selectedText = document.getText(selection);
   const symbols = await getDocumentSymbols(document);
-  const functionMatch = findInnermostFunctionSymbolAtPosition(
+  const functionMatch = resolveFunctionMatchForSelection(
+    document,
     symbols,
-    selection.active
+    selection
   );
   const selectedTextForOutput = functionMatch
     ? selectedText
@@ -258,7 +264,9 @@ export async function copySelection() {
     text: textWithParents,
   };
 
-  const formattedText = formatTemplate("template", replacements);
+  const formattedText = formatFunctionContentTemplate(document, replacements, {
+    autoWrapPythonWithoutFence: false,
+  });
   if (formattedText) {
     await writeClipboardText(formattedText);
   }
@@ -416,6 +424,32 @@ export function findInnermostFunctionSymbolAtPosition(
   return bestMatch;
 }
 
+function collectFunctionSymbolMatches(
+  symbols: vscode.DocumentSymbol[]
+): FunctionSymbolMatch[] {
+  const matches: FunctionSymbolMatch[] = [];
+
+  const visit = (
+    symbol: vscode.DocumentSymbol,
+    ancestors: vscode.DocumentSymbol[]
+  ) => {
+    if (FUNCTION_SYMBOL_KINDS.has(symbol.kind)) {
+      matches.push({ symbol, ancestors });
+    }
+
+    const childAncestors = [...ancestors, symbol];
+    for (const child of symbol.children) {
+      visit(child, childAncestors);
+    }
+  };
+
+  for (const symbol of symbols) {
+    visit(symbol, []);
+  }
+
+  return matches;
+}
+
 export function getTextByRange(
   document: vscode.TextDocument,
   range: vscode.Range
@@ -559,7 +593,7 @@ function computeFunctionSelectionOmission(
     definitionBlock.endLine + 1,
     functionMatch.symbol.range.start.line + 1
   );
-  const bodyEndLine = functionMatch.symbol.range.end.line;
+  const bodyEndLine = getFunctionBodyEndLine(document, functionMatch);
   const selectionStartLine = Math.min(selection.start.line, selection.end.line);
   const selectionEndLine = Math.max(selection.start.line, selection.end.line);
   const hasPrefixOmission = hasSignificantCodeLineInRange(
@@ -579,6 +613,134 @@ function computeFunctionSelectionOmission(
     prefixIndent: findFirstSelectedNonEmptyLineIndent(document, selection),
     suffixIndent: findLastSelectedNonEmptyLineIndent(document, selection),
   };
+}
+
+function getPythonFunctionBodyEndLine(
+  document: vscode.TextDocument,
+  symbol: vscode.DocumentSymbol
+): number {
+  const definitionBlock = extractDefinitionBlock(document, symbol);
+  const symbolEndLine = Math.min(symbol.range.end.line, document.lineCount - 1);
+  if (symbolEndLine > definitionBlock.endLine) {
+    return symbolEndLine;
+  }
+
+  const definitionLine = getDefinitionLineNumber(symbol);
+  const definitionIndent = getLineIndent(document.lineAt(definitionLine).text).length;
+  let lastBodyLine = definitionBlock.endLine;
+
+  for (let line = definitionBlock.endLine + 1; line < document.lineCount; line += 1) {
+    const lineText = document.lineAt(line).text;
+    const trimmed = lineText.trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+
+    const indent = getLineIndent(lineText).length;
+    if (indent <= definitionIndent) {
+      break;
+    }
+    lastBodyLine = line;
+  }
+
+  return Math.max(symbolEndLine, lastBodyLine);
+}
+
+function getFunctionBodyEndLine(
+  document: vscode.TextDocument,
+  functionMatch: FunctionSymbolMatch
+): number {
+  if (document.languageId === "python") {
+    return getPythonFunctionBodyEndLine(document, functionMatch.symbol);
+  }
+  return functionMatch.symbol.range.end.line;
+}
+
+function lineRangesOverlap(
+  aStartLine: number,
+  aEndLine: number,
+  bStartLine: number,
+  bEndLine: number
+): boolean {
+  return aStartLine <= bEndLine && bStartLine <= aEndLine;
+}
+
+function findInnermostFunctionSymbolAtSelection(
+  document: vscode.TextDocument,
+  symbols: vscode.DocumentSymbol[],
+  selection: vscode.Selection
+): FunctionSymbolMatch | undefined {
+  const selectionStartLine = Math.min(selection.start.line, selection.end.line);
+  const selectionEndLine = Math.max(selection.start.line, selection.end.line);
+  const candidates = collectFunctionSymbolMatches(symbols);
+
+  let bestMatch: FunctionSymbolMatch | undefined;
+  let bestSpan = Number.POSITIVE_INFINITY;
+  let bestStartLine = -1;
+  let bestDepth = -1;
+
+  for (const candidate of candidates) {
+    const definitionBlock = extractDefinitionBlock(document, candidate.symbol);
+    const candidateStartLine = definitionBlock.startLine;
+    const candidateEndLine = Math.max(
+      definitionBlock.endLine,
+      getFunctionBodyEndLine(document, candidate)
+    );
+    if (
+      !lineRangesOverlap(
+        selectionStartLine,
+        selectionEndLine,
+        candidateStartLine,
+        candidateEndLine
+      )
+    ) {
+      continue;
+    }
+
+    const span = candidateEndLine - candidateStartLine;
+    const depth = candidate.ancestors.length;
+    if (
+      !bestMatch ||
+      span < bestSpan ||
+      (span === bestSpan && candidateStartLine > bestStartLine) ||
+      (span === bestSpan &&
+        candidateStartLine === bestStartLine &&
+        depth > bestDepth)
+    ) {
+      bestMatch = candidate;
+      bestSpan = span;
+      bestStartLine = candidateStartLine;
+      bestDepth = depth;
+    }
+  }
+
+  return bestMatch;
+}
+
+function resolveFunctionMatchForSelection(
+  document: vscode.TextDocument,
+  symbols: vscode.DocumentSymbol[],
+  selection: vscode.Selection
+): FunctionSymbolMatch | undefined {
+  const checkedPositions = new Set<string>();
+  const anchors = [selection.active, selection.start, selection.end];
+  for (const position of anchors) {
+    const key = `${position.line}:${position.character}`;
+    if (checkedPositions.has(key)) {
+      continue;
+    }
+    checkedPositions.add(key);
+    const match = findInnermostFunctionSymbolAtPosition(symbols, position);
+    if (match) {
+      return match;
+    }
+  }
+
+  if (document.languageId === "python") {
+    return findInnermostFunctionSymbolAtSelection(document, symbols, selection);
+  }
+
+  return undefined;
 }
 
 export function isNameSegmentSymbolKind(kind: vscode.SymbolKind): boolean {
